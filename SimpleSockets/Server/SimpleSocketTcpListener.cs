@@ -111,7 +111,8 @@ namespace SimpleSockets.Server
 
 					RaiseClientConnected(state);
 				}
-				Receive(state, 0);
+
+				NetworkDataReceiver(state);
 			}
 			catch (ObjectDisposedException ode)
 			{
@@ -126,76 +127,76 @@ namespace SimpleSockets.Server
 
 		#region Receiving
 
-		protected internal override void Receive(IClientMetadata state, int offset = 0)
+
+		protected override void NetworkDataReceiver(IClientMetadata state)
 		{
-			
-			if (offset > 0)
-			{
-				state.UnhandledBytes = state.Buffer;
-			}
-
-			if (state.Buffer.Length < state.BufferSize)
-			{
-				state.ChangeBuffer(new byte[state.BufferSize]);
-				if (offset > 0)
-					Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
-			}
-
-			state.Listener.BeginReceive(state.Buffer, offset, state.BufferSize - offset, SocketFlags.None, ReceiveCallback, state);
-		}
-
-		protected override async void ReceiveCallback(IAsyncResult result)
-		{
-			var state = (ClientMetadata)result.AsyncState;
 			try
 			{
-
-				//Check if client is still connected.
-				//If client is disconnected, send disconnected message
-				//and remove from clients list
-				if (!IsConnected(state.Id))
+				while (!Token.IsCancellationRequested)
 				{
-					RaiseClientDisconnected(state);
-					lock (ConnectedClients)
-					{
-						ConnectedClients.Remove(state.Id);
-					}
-				}
-				//Else start receiving and handle the message.
-				else
-				{
-					var receive = state.Listener.EndReceive(result);
+					var offset = 0;
 
 					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
+						offset = state.UnhandledBytes.Length;
+
+					if (state.Buffer.Length < state.BufferSize)
 					{
-						receive += state.UnhandledBytes.Length;
-						state.UnhandledBytes = null;
+						state.ChangeBuffer(new byte[state.BufferSize]);
+						if (offset > 0)
+							Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
 					}
 
-					//Does header check
-					if (state.Flag == 0)
-					{
-						if (state.SimpleMessage == null)
-							state.SimpleMessage = new SimpleMessage(state, this, Debug);
-						await ParallelQueue.Enqueue(() => state.SimpleMessage.ReadBytesAndBuildMessage(receive));
-					}else if (receive > 0)
-					{
-						await ParallelQueue.Enqueue(() => state.SimpleMessage.ReadBytesAndBuildMessage(receive));
-					}
+					state.Listener.BeginReceive(state.Buffer, offset, state.Buffer.Length - offset, SocketFlags.None, 
+						Receiver = async (ar) =>
+						{
+							var client = (ClientMetadata)ar.AsyncState;
+							var receive = state.Listener.EndReceive(ar);
+							//Check if client is still connected.
+							//If client is disconnected, send disconnected message
+							//and remove from clients list
+							if (!IsConnected(state.Id))
+							{
+								RaiseClientDisconnected(state);
+								lock (ConnectedClients)
+								{
+									ConnectedClients.Remove(state.Id);
+								}
+							}
+							//Else start receiving and handle the message.
+							else
+							{
+								if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+								{
+									receive += client.UnhandledBytes.Length;
+									client.UnhandledBytes = null;
+								}
 
-					Receive(state, state.Buffer.Length);
+								//Does header check
+								if (client.Flag == 0)
+								{
+									if (client.SimpleMessage == null)
+										client.SimpleMessage = new SimpleMessage(client, this, Debug);
+									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+								}
+								else if (receive > 0)
+								{
+									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+								}
+							}
+
+						}, state);
 				}
 			}
 			catch (Exception ex)
 			{
 				state.Reset();
-				RaiseErrorThrown(ex);
 				RaiseLog(ex);
 				RaiseLog("Error handling message from client with guid : " + state.Guid + ".");
-				Receive(state, state.Buffer.Length);
+				RaiseErrorThrown(ex);
+				NetworkDataReceiver(state);
 			}
 		}
-
+		
 		#endregion
 
 		#region Message Sending

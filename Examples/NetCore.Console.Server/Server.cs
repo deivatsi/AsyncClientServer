@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection.Metadata.Ecma335;
 using System.Text;
 using System.Threading;
+using NetCore.Console.Client.MessageContracts;
 using NetCore.Console.Server.MessageContracts;
 using SimpleSockets;
 using SimpleSockets.Messaging;
@@ -26,6 +27,7 @@ namespace NetCore.Console.Server
 			_listener = new SimpleSocketTcpListener();
 			//_listener = new SimpleSocketTcpSslListener(@"PATH\TO\CERT.pfx","Password");
 
+			_listener.ObjectSerializer = new XmlSerialization();
 			_listener.AllowReceivingFiles = true;
 			_messageAContract = new MessageA("MessageAHeader");
 			_listener.AddMessageContract(_messageAContract);
@@ -66,6 +68,7 @@ namespace NetCore.Console.Server
 				WriteLine("    - File      (F)");
 				WriteLine("    - Directory (D)");
 				WriteLine("    - Contract  (B)");
+				WriteLine("    - Object    (O)");
 				Write("Enter your chosen type: ");
 
 				var option = System.Console.ReadLine();
@@ -87,6 +90,9 @@ namespace NetCore.Console.Server
 							break;
 						case "B":
 							SendMessageContract();
+							break;
+						case "O":
+							SendObject();
 							break;
 						default:
 							Options();
@@ -193,6 +199,18 @@ namespace NetCore.Console.Server
 			await _listener.SendFolderAsync(id,path, targetPath,true, false);
 		}
 
+		private static async void SendObject()
+		{
+			System.Console.Clear();
+			var id = ShowClients();
+
+			var test = new TestObject("TestNameServer", "Test2NameServer", 9000);
+
+			WriteLine("Press enter to send a test object.");
+			System.Console.ReadLine();
+			await _listener.SendObjectAsync(id, test, _compress, _encrypt);
+		}
+
 		#region Events
 
 		private static void BindEvents()
@@ -242,6 +260,13 @@ namespace NetCore.Console.Server
 		private static void ListenerOnObjectReceived(IClientInfo client, object obj, Type objType)
 		{
 			WriteLine("Received an object of type = " + objType.FullName);
+
+			if (objType == typeof(TestObject))
+			{
+				var test = (TestObject)obj;
+				WriteLine("Values of the object : Firstname: " + test.FirstName + ", lastname: " + test.LastName + ",zipcode: " + test.ZipCode);
+			}
+
 		}
 
 		private static void ListenerOnFolderReceiver(IClientInfo client, int currentPart, int totalParts, string loc, MessageState state)
@@ -325,6 +350,9 @@ namespace NetCore.Console.Server
 
 		private static void MessageReceived(IClientInfo client, string msg)
 		{
+
+			Type type = Type.GetType("TestObject");
+
 			WriteLine("The server has received a message from client " + client.Id + " with name : " + client.ClientName +" and guid : " + client.Guid);
 			WriteLine("The client is running on " + client.OsVersion + " and UserDomainName = " + client.UserDomainName);
 

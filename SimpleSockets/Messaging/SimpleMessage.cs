@@ -588,6 +588,7 @@ namespace SimpleSockets.Messaging
 
 		private async Task<bool> ReadData(int receive)
 		{
+			bool retVal = true;
 			byte[] bytes = new byte[receive];
 
 			_state.AppendRead(receive);
@@ -640,7 +641,7 @@ namespace SimpleSockets.Messaging
 						_socket.RaiseFileReceiver(_state, _partNumber, _totalParts, file, MessageState.Beginning);
 					}
 
-					using (BinaryWriter writer = new BinaryWriter(File.Open(file, FileMode.Append)))
+					using (var writer = new BinaryWriter(File.Open(file, FileMode.Append)))
 					{
 						writer.Write(bytes, 0, bytes.Length);
 						writer.Close();
@@ -655,21 +656,21 @@ namespace SimpleSockets.Messaging
 			if (_state.Flag == -2)
 			{
 				bytes = null;
-				MessageHasBeenReceived();
+				retVal = await MessageHasBeenReceived();
 				_state.Reset();
 			}
 
 			if (_state.Flag == -3)
 			{
 				bytes = null;
-				MessageHasBeenReceived();
+				retVal = await MessageHasBeenReceived();
 				_state.Reset();
-				return await ReadBytesAndBuildMessage(_state.Buffer.Length);
+				_state.UnhandledBytes = _state.Buffer;
+				//return await ReadBytesAndBuildMessage(_state.Buffer.Length);
 			}
 
 
-			return true;
-			//_socket.Receive(_state, 0);
+			return retVal;
 		}
 
 		private string GetTempPath(string path)
@@ -712,7 +713,7 @@ namespace SimpleSockets.Messaging
 
 		#region CompletedMessageHandlers
 
-		private void MessageHasBeenReceived()
+		private async Task<bool> MessageHasBeenReceived()
 		{
 
 			if (MessageType != MessageType.Folder && MessageType != MessageType.File)
@@ -720,10 +721,10 @@ namespace SimpleSockets.Messaging
 				//Header has already been decrypted and decompressed.
 
 				if (Encrypted)
-					_state.ChangeReceivedBytes(_socket.DecryptBytes(_state.ReceivedBytes));
+					_state.ChangeReceivedBytes( await _socket.DecryptBytesAsync(_state.ReceivedBytes));
 
 				if (Compressed)
-					_state.ChangeReceivedBytes(_socket.DecompressBytes(_state.ReceivedBytes));
+					_state.ChangeReceivedBytes( await _socket.DecompressBytesAsync(_state.ReceivedBytes));
 			}
 
 			//Invoke correct receiver.
@@ -750,7 +751,9 @@ namespace SimpleSockets.Messaging
 				}
 				case MessageType.Object:
 				{
-					var obj = _socket.ObjectSerializer.DeserializeBytesToObject(_state.ReceivedBytes);
+					var msg = Encoding.UTF8.GetString(Header);
+					Type objType = Type.GetType(msg);
+					var obj = _socket.ObjectSerializer.DeserializeBytesToObject(_state.ReceivedBytes, objType);
 					_socket.RaiseObjectReceived(_state, obj, obj.GetType());
 					break;
 				}
@@ -776,7 +779,8 @@ namespace SimpleSockets.Messaging
 							_socket.RaiseFileReceiver(_state, _partNumber, _totalParts, output, MessageState.Decrypting);
 							Log("Decrypting file from path : " + file);
 							var tmp = file;
-							file = _socket.DecryptFile(file, _socket.TempPath + Path.GetRandomFileName()).FullName;
+							var fInfo = await _socket.DecryptFileAsync(file, _socket.TempPath + Path.GetRandomFileName());
+							file = fInfo.FullName;
 							File.Delete(tmp);
 							Log("File has been decrypted from path: " + file);
 							_socket.RaiseFileReceiver(_state, _partNumber, _totalParts, output,MessageState.DecryptingDone);
@@ -787,7 +791,8 @@ namespace SimpleSockets.Messaging
 							_socket.RaiseFileReceiver(_state, _partNumber, _totalParts, output,MessageState.Decompressing);
 							Log("Decompressing file from path : " + file);
 							var tmp = file;
-							file = _socket.DecompressFile(new FileInfo(file), _socket.TempPath + Path.GetRandomFileName()).FullName;
+							var fInfo = await _socket.DecompressFileAsync(new FileInfo(file), _socket.TempPath + Path.GetRandomFileName());
+							file = fInfo.FullName;
 							if (Encrypted)
 								File.Delete(tmp);
 							Log("File Decompressed from path : " + file);
@@ -838,7 +843,8 @@ namespace SimpleSockets.Messaging
 
 						if (Encrypted)
 						{
-							var tmp = _socket.DecryptFile(folder, _socket.TempPath + Path.GetRandomFileName()).FullName;
+							var fInfo = await _socket.DecryptFileAsync(folder, _socket.TempPath + Path.GetRandomFileName());
+							var tmp = fInfo.FullName;
 							File.Delete(folder);
 							folder = tmp;
 						}
@@ -852,9 +858,11 @@ namespace SimpleSockets.Messaging
 					break;
 				}
 				default:
-					throw new ArgumentOutOfRangeException();
+					return false;
+
 			}
 
+			return true;
 		}
 
 		private IMessageContract GetCorrespondingMessageContract(string header)

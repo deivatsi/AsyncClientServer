@@ -14,6 +14,9 @@ namespace SimpleSockets.Client
 	public class SimpleSocketTcpClient: SimpleSocketClient
 	{
 
+		/// <summary>
+		/// Creates a TcpClient socket.
+		/// </summary>
 		public SimpleSocketTcpClient() : base()
 		{
 
@@ -102,7 +105,7 @@ namespace SimpleSockets.Client
 				ConnectedMre.Set();
 				KeepAliveTimer.Enabled = true;
 				var state = new ClientMetadata(Listener);
-				Receive(state);
+				NetworkDataReceiver(state);
 			}
 			catch (ObjectDisposedException ex)
 			{
@@ -120,7 +123,7 @@ namespace SimpleSockets.Client
 			}
 		}
 
-		#region MESSAGE SENDING
+		#region Sending
 
 		protected override void BeginSendFromQueue(MessageWrapper message)
 		{
@@ -174,62 +177,63 @@ namespace SimpleSockets.Client
 
 		#region Receiving
 
-		protected internal override void Receive(IClientMetadata state, int offset = 0)
+		protected override void NetworkDataReceiver(IClientMetadata state)
 		{
-			if (offset > 0)
-			{
-				state.UnhandledBytes = state.Buffer;
-			}
-
-			if (state.Buffer.Length < state.BufferSize)
-			{
-				state.ChangeBuffer(new byte[state.BufferSize]);
-				if (offset > 0)
-					Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
-			}
-
-			state.Listener.BeginReceive(state.Buffer, offset, state.BufferSize - offset, SocketFlags.None, this.ReceiveCallback, state);
-		}
-
-		protected override async void ReceiveCallback(IAsyncResult result)
-		{
-			if (!IsConnected())
-			{
-				RaiseLog(new Exception("Socket is not connected, can't receive messages."));
-				return;
-			}
-
-			var state = (ClientMetadata)result.AsyncState;
 			try
 			{
-
-				var receive = state.Listener.EndReceive(result);
-
-				if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
+				while (!Token.IsCancellationRequested)
 				{
-					receive += state.UnhandledBytes.Length;
-					state.UnhandledBytes = null;
-				}
+					var offset = 0;
 
-				//Does header check
-				if (state.Flag == 0)
-				{
-					if (state.SimpleMessage == null)
-						state.SimpleMessage = new SimpleMessage(state, this, true);
-					await state.SimpleMessage.ReadBytesAndBuildMessage(receive);
-				}
-				else if (receive > 0)
-				{
-					await state.SimpleMessage.ReadBytesAndBuildMessage(receive);
-				}
+					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
+						offset = state.UnhandledBytes.Length;
 
-				Receive(state, state.Buffer.Length);
+					if (state.Buffer.Length < state.BufferSize)
+					{
+						state.ChangeBuffer(new byte[state.BufferSize]);
+						if (offset > 0)
+							Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
+					}
+
+					state.Listener.BeginReceive(state.Buffer, offset, state.Buffer.Length - offset, SocketFlags.None,
+						Receiver = async (ar) =>
+						{
+							if (!IsConnected())
+							{
+								RaiseLog(new Exception("Socket is not connected, can't receive messages."));
+								return;
+							}
+
+							var client = (ClientMetadata)ar.AsyncState;
+							var receive = client.Listener.EndReceive(ar);
+
+							if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+							{
+								receive += client.UnhandledBytes.Length;
+								client.UnhandledBytes = null;
+							}
+
+							//Does header check
+							if (state.Flag == 0)
+							{
+								if (client.SimpleMessage == null)
+									client.SimpleMessage = new SimpleMessage(client, this, true);
+								await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+							}
+							else if (receive > 0)
+							{
+								await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+							}
+						}, state);
+				}
 			}
 			catch (Exception ex)
 			{
 				state.Reset();
+				RaiseLog(ex);
+				RaiseLog("Error handling message from client with guid : " + state.Guid + ".");
 				RaiseErrorThrown(ex);
-				Receive(state);
+				NetworkDataReceiver(state);
 			}
 		}
 		

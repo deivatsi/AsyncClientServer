@@ -832,33 +832,53 @@ namespace SimpleSockets.Server
 			if (ObjectSerializer == null)
 				throw new Exception("No ObjectSerializer is currently set.");
 
-			var client = GetClient(id);
-			var builder = new SimpleMessage(MessageType.Object, this, Debug)
-				.CompressMessage(compress)
-				.EncryptMessage(encrypt)
-				.SetBytes(ObjectSerializer.SerializeObjectToBytes(obj))
-				.SetSendClient(client);
+			try
+			{
+				var serializedObject = ObjectSerializer.SerializeObjectToBytes(obj);
 
-			await builder.BuildAsync();
+				var client = GetClient(id);
+				var builder = new SimpleMessage(MessageType.Object, this, Debug)
+					.CompressMessage(compress)
+					.EncryptMessage(encrypt)
+					.SetBytes(serializedObject)
+					.SetSendClient(client)
+					.SetHeaderString(obj.GetType().AssemblyQualifiedName);
 
-			SendToSocket(builder.PayLoad, close, false, id);
+				await builder.BuildAsync();
+
+				SendToSocket(builder.PayLoad, close, false, id);
+			}
+			catch (Exception ex)
+			{
+				RaiseLog("Error trying to serialize object.");
+				RaiseErrorThrown(ex);
+			}
+
 		}
 
 		public void SendObject(int id, object obj, bool compress = false, bool encrypt = false, bool close = false)
 		{
 			if (ObjectSerializer == null)
 				throw new Exception("No ObjectSerializer is currently set.");
+			try
+			{
+				var client = GetClient(id);
+				var builder = new SimpleMessage(MessageType.Object, this, Debug)
+					.CompressMessage(compress)
+					.EncryptMessage(encrypt)
+					.SetBytes(ObjectSerializer.SerializeObjectToBytes(obj))
+					.SetSendClient(client)
+					.SetHeaderString(obj.GetType().AssemblyQualifiedName);
 
-			var client = GetClient(id);
-			var builder = new SimpleMessage(MessageType.Object, this, Debug)
-				.CompressMessage(compress)
-				.EncryptMessage(encrypt)
-				.SetBytes(ObjectSerializer.SerializeObjectToBytes(obj))
-				.SetSendClient(client);
+				builder.Build();
 
-			builder.Build();
-
-			SendToSocket(builder.PayLoad, close, false, id);
+				SendToSocket(builder.PayLoad, close, false, id);
+			}
+			catch (Exception ex)
+			{
+				RaiseLog("Error trying to serialize object.");
+				RaiseErrorThrown(ex);
+			}
 		}
 
 		#endregion

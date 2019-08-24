@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Reflection.Metadata.Ecma335;
 using System.Threading;
 using System.Threading.Tasks;
 using NetCore.Console.Client.MessageContracts;
@@ -7,6 +6,7 @@ using SimpleSockets;
 using SimpleSockets.Client;
 using SimpleSockets.Messaging;
 using SimpleSockets.Messaging.Metadata;
+using MessageA = NetCore.Console.Client.MessageContracts.MessageA;
 
 namespace NetCore.Console.Client
 {
@@ -28,6 +28,7 @@ namespace NetCore.Console.Client
 
 			_client.EnableExtendedAuth = true;
 			_client.AllowReceivingFiles = true;
+			_client.ObjectSerializer = new XmlSerialization();
 
 
 			//Create the MessageContract implementation and add to the client
@@ -71,6 +72,7 @@ namespace NetCore.Console.Client
 				WriteLine("    - File      (F)");
 				WriteLine("    - Directory (D)");
 				WriteLine("    - Contract  (B)");
+				WriteLine("    - Object    (O)");
 				Write("Enter your chosen type: ");
 
 				var option = System.Console.ReadLine();
@@ -92,6 +94,9 @@ namespace NetCore.Console.Client
 							break;
 						case "B":
 							SendMessageContract();
+							break;
+						case "O":
+							SendObject();
 							break;
 						default:
 							Options();
@@ -156,6 +161,16 @@ namespace NetCore.Console.Client
 			await _client.SendFolderAsync(path, targetPath,_encrypt, false);
 		}
 
+		private static async void SendObject()
+		{
+			System.Console.Clear();
+			var test = new TestObject("TestNameClient", "Test2NameClient", 9000);
+
+			WriteLine("Press enter to send a test object.");
+			System.Console.ReadLine();
+			await _client.SendObjectAsync(test, _compress, _encrypt);
+		}
+
 
 		#region Events
 
@@ -191,6 +206,13 @@ namespace NetCore.Console.Client
 		private static void ClientOnObjectReceived(SimpleSocketClient a, object obj, Type objType)
 		{
 			WriteLine("Received an object of type = " + objType.FullName);
+
+			if (objType == typeof(TestObject))
+			{
+				var test = (TestObject) obj;
+				WriteLine("Values of the object : Firstname: " + test.FirstName +  ", lastname: " + test.LastName + ",zipcode: " + test.ZipCode);
+			}
+
 		}
 
 		private static void ClientOnMessageUpdate(SimpleSocketClient a, string msg, string header, MessageType msgType, MessageState state)

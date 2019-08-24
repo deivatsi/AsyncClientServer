@@ -23,7 +23,6 @@ namespace SimpleSockets.Client
 		private SslStream _sslStream;
 		private readonly X509Certificate2 _sslCertificate;
 		private X509Certificate2Collection _sslCertificateCollection;
-		private readonly ManualResetEvent _mreRead = new ManualResetEvent(true);
 		private readonly ManualResetEvent _mreWriting = new ManualResetEvent(true);
 		private readonly TlsProtocol _tlsProtocol;
 
@@ -130,7 +129,7 @@ namespace SimpleSockets.Client
 					ConnectedMre.Set();
 					KeepAliveTimer.Enabled = true;
 					var state = new ClientMetadata(Listener);
-					Receive(state);
+					NetworkDataReceiver(state);
 				}
 				else
 				{
@@ -257,7 +256,6 @@ namespace SimpleSockets.Client
 			try
 			{
 				_sslStream.EndWrite(result);
-				_mreWriting.Set();
 			}
 			catch (SocketException se)
 			{
@@ -274,6 +272,7 @@ namespace SimpleSockets.Client
 				if (!message.Partial && CloseClient)
 					Close();
 
+				_mreWriting.Set();
 				SentMre.Set();
 			}
 		}
@@ -282,65 +281,59 @@ namespace SimpleSockets.Client
 
 		#region Receiving
 
-		protected internal override void Receive(IClientMetadata state, int offset = 0)
+		protected override void NetworkDataReceiver(IClientMetadata state)
 		{
 			try
 			{
-				state.SslStream = _sslStream;
-
-				if (offset > 0)
+				while (!Token.IsCancellationRequested)
 				{
-					state.UnhandledBytes = state.Buffer;
+
+					var offset = 0;
+
+					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
+						offset = state.UnhandledBytes.Length;
+
+					if (state.Buffer.Length < state.BufferSize)
+					{
+						state.ChangeBuffer(new byte[state.BufferSize]);
+						if (offset > 0)
+							Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
+					}
+
+					state.MreRead.WaitOne();
+					state.MreRead.Reset();
+					_sslStream.BeginRead(state.Buffer, offset, state.Buffer.Length, Receiver = async (ar) =>
+					{
+						var client = (ClientMetadata)ar.AsyncState;
+						var receive = _sslStream.EndRead(ar);
+
+						if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+						{
+							receive += client.UnhandledBytes.Length;
+							client.UnhandledBytes = null;
+						}
+
+						if (state.Flag == 0)
+						{
+							if (client.SimpleMessage == null)
+								client.SimpleMessage = new SimpleMessage(client, this, Debug);
+							await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+						}
+						else if (receive > 0)
+							await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+
+						client.MreRead.Set();
+					}, state);
+
 				}
-
-				if (state.Buffer.Length < state.BufferSize)
-				{
-					state.ChangeBuffer(new byte[state.BufferSize]);
-					if (offset > 0)
-						Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
-				}
-
-				_mreRead.WaitOne();
-				_mreRead.Reset();
-				state.SslStream.BeginRead(state.Buffer, offset, state.BufferSize - offset, ReceiveCallback, state);
-			}
-			catch (Exception ex)
-			{
-				throw new Exception(ex.Message, ex);
-			}
-		}
-
-		protected override async void ReceiveCallback(IAsyncResult result)
-		{
-			var state = (ClientMetadata)result.AsyncState;
-			try
-			{
-				var receive = state.SslStream.EndRead(result);
-				_mreRead.Set();
-
-				if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
-				{
-					receive += state.UnhandledBytes.Length;
-					state.UnhandledBytes = null;
-				}
-
-				if (state.Flag == 0)
-				{
-					if (state.SimpleMessage == null)
-						state.SimpleMessage = new SimpleMessage(state, this, Debug);
-					await state.SimpleMessage.ReadBytesAndBuildMessage(receive);
-				}
-				else if (receive > 0)
-					await state.SimpleMessage.ReadBytesAndBuildMessage(receive);
-
-				Receive(state, state.Buffer.Length);
 			}
 			catch (Exception ex)
 			{
 				state.Reset();
-				DisposeSslStream();
+				RaiseLog(ex);
+				RaiseLog("Error handling message from client with guid : " + state.Guid + ".");
 				RaiseErrorThrown(ex);
-				Receive(state);
+				NetworkDataReceiver(state);
 			}
 		}
 
@@ -355,7 +348,6 @@ namespace SimpleSockets.Client
 			try
 			{
 				base.Dispose();
-				_mreRead.Dispose();
 				_mreWriting.Dispose();
 			}
 			catch (Exception ex)

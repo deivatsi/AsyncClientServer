@@ -53,7 +53,7 @@ namespace SimpleSockets.Client
 
 	#endregion
 
-	public abstract class SimpleSocketClient: SimpleSocket
+	public abstract class SimpleSocketClient : SimpleSocket
 	{
 
 		#region Vars
@@ -315,7 +315,7 @@ namespace SimpleSockets.Client
 		#endregion
 
 		#endregion
-		
+
 		#region SendingData
 
 		//Sends message from queue
@@ -403,19 +403,19 @@ namespace SimpleSockets.Client
 			ObjectReceived?.Invoke(this, obj, objectType);
 		}
 
-		protected internal override void RaiseMessageUpdateStateFileTransfer(IClientInfo client, string origin, string remoteSaveLoc,double percentageDone, MessageState state)
+		protected internal override void RaiseMessageUpdateStateFileTransfer(IClientInfo client, string origin, string remoteSaveLoc, double percentageDone, MessageState state)
 		{
 			MessageUpdateFileTransfer?.Invoke(this, origin, remoteSaveLoc, percentageDone, state);
 		}
 
-		protected internal override void RaiseMessageUpdate(IClientInfo client, string msg, string header, MessageType msgType,MessageState state)
+		protected internal override void RaiseMessageUpdate(IClientInfo client, string msg, string header, MessageType msgType, MessageState state)
 		{
 			MessageUpdate?.Invoke(this, msg, header, msgType, state);
 		}
 
-		protected internal override void RaiseMessageFailed(IClientInfo client, byte[] payLoad,Exception ex)
+		protected internal override void RaiseMessageFailed(IClientInfo client, byte[] payLoad, Exception ex)
 		{
-			MessageFailed?.Invoke(this,payLoad,ex);
+			MessageFailed?.Invoke(this, payLoad, ex);
 		}
 
 		protected internal override void RaiseLog(string message)
@@ -557,7 +557,7 @@ namespace SimpleSockets.Client
 
 		#region MessageContract
 
-		public void SendMessageContract(IMessageContract contract, bool compress = false, bool encrypt = false,bool close = false)
+		public void SendMessageContract(IMessageContract contract, bool compress = false, bool encrypt = false, bool close = false)
 		{
 			var builder = new SimpleMessage(MessageType.MessageContract, this, Debug)
 				.CompressMessage(compress)
@@ -639,24 +639,24 @@ namespace SimpleSockets.Client
 
 		public async Task SendFileAsync(string fileLocation, string remoteSaveLocation, bool compress = true, bool encrypt = false, bool close = false)
 		{
-			await StreamFileFolderAsync(fileLocation, remoteSaveLocation, encrypt, compress, close,MessageType.File);
+			await StreamFileFolderAsync(fileLocation, remoteSaveLocation, encrypt, compress, close, MessageType.File);
 		}
 
 		public void SendFile(string fileLocation, string remoteSaveLocation, bool compress = true, bool encrypt = false, bool close = false)
 		{
-			StreamFileFolder(fileLocation, remoteSaveLocation, encrypt, compress, close,MessageType.File);
+			StreamFileFolder(fileLocation, remoteSaveLocation, encrypt, compress, close, MessageType.File);
 		}
 
 		#endregion
 
 		#region Folder
 
-		public async Task SendFolderAsync(string folderLocation, string remoteSaveLocation,bool encrypt = false, bool close = false)
+		public async Task SendFolderAsync(string folderLocation, string remoteSaveLocation, bool encrypt = false, bool close = false)
 		{
-			await StreamFileFolderAsync(folderLocation, remoteSaveLocation, encrypt, true, close,MessageType.Folder);
+			await StreamFileFolderAsync(folderLocation, remoteSaveLocation, encrypt, true, close, MessageType.Folder);
 		}
 
-		public void SendFolder(string folderLocation, string remoteSaveLocation,bool encrypt = false, bool close = false)
+		public void SendFolder(string folderLocation, string remoteSaveLocation, bool encrypt = false, bool close = false)
 		{
 			StreamFileFolder(folderLocation, remoteSaveLocation, encrypt, true, close, MessageType.Folder);
 		}
@@ -671,28 +671,49 @@ namespace SimpleSockets.Client
 			if (ObjectSerializer == null)
 				throw new Exception("No ObjectSerializer is currently set.");
 
-			var builder = new SimpleMessage(MessageType.Object, this, Debug)
-				.CompressMessage(compress)
-				.EncryptMessage(encrypt)
-				.SetBytes(ObjectSerializer.SerializeObjectToBytes(obj));
+			try
+			{
+				var builder = new SimpleMessage(MessageType.Object, this, Debug)
+					.CompressMessage(compress)
+					.EncryptMessage(encrypt)
+					.SetBytes(ObjectSerializer.SerializeObjectToBytes(obj))
+					.SetHeaderString(obj.GetType().ToString());
 
-			await builder.BuildAsync();
+				await builder.BuildAsync();
 
-			SendToSocket(builder.PayLoad, close, false);
+				SendToSocket(builder.PayLoad, close, false);
+			}
+			catch (Exception ex)
+			{
+				RaiseLog("Error trying to send an object.");
+				RaiseLog(ex);
+				RaiseErrorThrown(ex);
+			}
+
 		}
 
 		public void SendObject(object obj, bool compress = false, bool encrypt = false, bool close = false)
 		{
-			if (ObjectSerializer == null)
-				throw new Exception("No ObjectSerializer is currently set.");
+			try
+			{
+				if (ObjectSerializer == null)
+					throw new Exception("No ObjectSerializer is currently set.");
 
-			var builder = new SimpleMessage(MessageType.Object, this, Debug)
-				.CompressMessage(compress)
-				.EncryptMessage(encrypt)
-				.SetBytes(ObjectSerializer.SerializeObjectToBytes(obj));
-			builder.Build();
+				var builder = new SimpleMessage(MessageType.Object, this, Debug)
+					.CompressMessage(compress)
+					.EncryptMessage(encrypt)
+					.SetBytes(ObjectSerializer.SerializeObjectToBytes(obj))
+					.SetHeaderString(obj.GetType().ToString());
 
-			SendToSocket(builder.PayLoad, close, false);
+				builder.Build();
+				SendToSocket(builder.PayLoad, close, false);
+			}
+			catch (Exception ex)
+			{
+				RaiseLog("Error trying to send an object.");
+				RaiseLog(ex);
+				RaiseErrorThrown(ex);
+			}
 		}
 
 

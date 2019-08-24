@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Threading;
 
 namespace SimpleSockets.Messaging.Metadata
 {
@@ -36,6 +37,9 @@ namespace SimpleSockets.Messaging.Metadata
 		public string LocalIPv4 { get; set; }
 		public string LocalIPv6 { get; set; }
 
+		public ManualResetEvent MreRead { get; }
+		public ManualResetEvent MreWrite { get;  }
+
 		/// <summary>
 		/// Constructor for StateObject
 		/// </summary>
@@ -47,8 +51,11 @@ namespace SimpleSockets.Messaging.Metadata
 
 			SetIps();
 
+			MreRead = new ManualResetEvent(true);
+			MreWrite = new ManualResetEvent(true);
 			Id = id;
 			Close = false;
+			UnhandledBytes = new byte[0];
 			Reset();
 		}
 

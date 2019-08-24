@@ -22,8 +22,6 @@ namespace SimpleSockets.Server
 		#region Vars
 
 		private readonly X509Certificate2 _serverCertificate = null;
-		private readonly ManualResetEvent _mreRead = new ManualResetEvent(true);
-		private readonly ManualResetEvent _mreWriting = new ManualResetEvent(true);
 		private readonly TlsProtocol _tlsProtocol;
 
 		public bool AcceptInvalidCertificates { get; set; }
@@ -101,7 +99,7 @@ namespace SimpleSockets.Server
 						while (!Token.IsCancellationRequested)
 						{
 							CanAcceptConnections.Reset();
-							listener.BeginAccept(this.OnClientConnect, listener);
+							listener.BeginAccept(OnClientConnect, listener);
 							CanAcceptConnections.WaitOne();
 						}
 					}
@@ -126,6 +124,9 @@ namespace SimpleSockets.Server
 					id = !ConnectedClients.Any() ? 1 : ConnectedClients.Keys.Max() + 1;
 
 					state = new ClientMetadata(((Socket) result.AsyncState).EndAccept(result), id);
+
+
+					ConnectedClients.Add(id, state);
 				}
 
 				//If the server shouldn't accept the IP do nothing.
@@ -143,16 +144,17 @@ namespace SimpleSockets.Server
 
 					if (success)
 					{
-						lock (ConnectedClients)
-						{
-							ConnectedClients.Add(id, state);
-						}
-
 						RaiseClientConnected(state);
-						Receive(state);
+						NetworkDataReceiver(state);
 					}
 					else
 					{
+
+						lock (ConnectedClients)
+						{
+							ConnectedClients.Remove(id);
+						}
+
 						throw new AuthenticationException("Unable to authenticate server.");
 					}
 
@@ -234,8 +236,8 @@ namespace SimpleSockets.Server
 		{
 			try
 			{
-				_mreWriting.WaitOne();
-				_mreWriting.Reset();
+				message.State.MreWrite.WaitOne();
+				message.State.MreWrite.Reset();
 				message.State.SslStream.BeginWrite(message.Data, 0, message.Data.Length, SendCallback, message);
 			}
 			catch (Exception ex)
@@ -253,7 +255,6 @@ namespace SimpleSockets.Server
 			try
 			{
 				state.SslStream.EndWrite(result);
-				_mreWriting.Set();
 				if (!message.Partial && state.Close)
 					Close(state.Id);
 			}
@@ -273,6 +274,8 @@ namespace SimpleSockets.Server
 			{
 				if (!message.Partial)
 					RaiseMessageSubmitted(state, state.Close);
+
+				message.State.MreWrite.Set();
 				message.Dispose();
 			}
 		}
@@ -306,82 +309,72 @@ namespace SimpleSockets.Server
 
 		#region Receive
 
-		protected internal override void Receive(IClientMetadata state, int offset = 0)
+		protected override void NetworkDataReceiver(IClientMetadata state)
 		{
 			try
 			{
-				if (offset > 0)
-					state.UnhandledBytes = state.Buffer;
-
-				if (state.Buffer.Length < state.BufferSize)
+				while (!Token.IsCancellationRequested)
 				{
-					state.ChangeBuffer(new byte[state.BufferSize]);
-					if (offset > 0)
-						Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
-				}
-
-				var sslStream = state.SslStream;
-				_mreRead.WaitOne();
-				_mreRead.Reset();
-				sslStream.BeginRead(state.Buffer, offset, state.BufferSize - offset, ReceiveCallback, state);
-			}
-			catch (Exception ex)
-			{
-				Log(ex);
-				Log("Error trying to receive from client " + state.Id);
-				throw new Exception(ex.Message, ex);
-			}
-		}
-
-		protected override async void ReceiveCallback(IAsyncResult result)
-		{
-			var state = (ClientMetadata)result.AsyncState;
-			try
-			{
-
-				//Check if client is still connected.
-				//If client is disconnected, send disconnected message
-				//and remove from clients list
-				if (!IsConnected(state.Id))
-				{
-					RaiseClientDisconnected(state);
-					lock (ConnectedClients)
-					{
-						ConnectedClients.Remove(state.Id);
-					}
-				}
-				//Else start receiving and handle the message.
-				else
-				{
-
-					var receive = state.SslStream.EndRead(result);
-
-					_mreRead.Set();
+					var offset = 0;
 
 					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
+						offset = state.UnhandledBytes.Length;
+
+					if (state.Buffer.Length < state.BufferSize)
 					{
-						receive += state.UnhandledBytes.Length;
-						state.UnhandledBytes = null;
+						state.ChangeBuffer(new byte[state.BufferSize]);
+						if (offset > 0)
+							Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
 					}
 
-					if (state.Flag == 0)
-					{
-						if (state.SimpleMessage == null)
-							state.SimpleMessage = new SimpleMessage(state, this, Debug);
-						await ParallelQueue.Enqueue(() => state.SimpleMessage.ReadBytesAndBuildMessage(receive));
-					}else if (receive > 0)
-						await ParallelQueue.Enqueue(() => state.SimpleMessage.ReadBytesAndBuildMessage(receive));
+					state.MreRead.WaitOne();
+					state.MreRead.Reset();
+					state.SslStream.BeginRead(state.Buffer, offset, state.Buffer.Length - offset,
+						Receiver = async (ar) =>
+						{
+							var client = (ClientMetadata)ar.AsyncState;
+							var receive = client.SslStream.EndRead(ar);
 
-					Receive(state, state.Buffer.Length);
+							if (!IsConnected(client.Id))
+							{
+								RaiseClientDisconnected(client);
+								lock (ConnectedClients)
+								{
+									ConnectedClients.Remove(client.Id);
+								}
+							}
+							//Else start receiving and handle the message.
+							else
+							{
+
+								if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+								{
+									receive += client.UnhandledBytes.Length;
+									client.UnhandledBytes = null;
+								}
+
+								if (client.Flag == 0 && receive > 0)
+								{
+									if (client.SimpleMessage == null)
+										client.SimpleMessage = new SimpleMessage(client, this, Debug);
+									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+								}
+								else if (receive > 0)
+									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+							}
+
+							client.MreRead.Set();
+						}, state);
+					
 				}
 			}
 			catch (Exception ex)
 			{
 				state.Reset();
 				RaiseLog(ex);
-				RaiseLog("Error handling message from client with guid : " + state.Guid  + ".");
+				RaiseLog("Error handling message from client with guid : " + state.Guid + ".");
 				RaiseErrorThrown(ex);
-				Receive(state);
+				NetworkDataReceiver(state);
 			}
 		}
 
@@ -395,8 +388,6 @@ namespace SimpleSockets.Server
 			try
 			{
 				base.Dispose();
-				_mreRead.Dispose();
-				_mreWriting.Dispose();
 			}
 			catch (Exception ex)
 			{

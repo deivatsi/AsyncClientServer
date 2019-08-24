@@ -1,8 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 
-namespace SimpleSockets.Messaging.MessageContract
+namespace SimpleSockets.Messaging.MessageContracts
 {
 
 	/// <summary>
@@ -23,8 +21,9 @@ namespace SimpleSockets.Messaging.MessageContract
 		/// you have to deserialize the outputted bytes from <seealso cref="SerializeObjectToBytes"/>
 		/// </summary>
 		/// <param name="bytes"></param>
+		/// <param name="objType"></param>
 		/// <returns></returns>
-		 object DeserializeBytesToObject(byte[] bytes);
+		object DeserializeBytesToObject(byte[] bytes, Type objType);
 
 	}
 }

@@ -11,6 +11,7 @@ using SimpleSockets.Messaging.Compression.Folder;
 using SimpleSockets.Messaging.Compression.Stream;
 using SimpleSockets.Messaging.Cryptography;
 using SimpleSockets.Messaging.MessageContract;
+using SimpleSockets.Messaging.MessageContracts;
 using SimpleSockets.Messaging.Metadata;
 
 namespace SimpleSockets
@@ -21,6 +22,8 @@ namespace SimpleSockets
 
 		//--Protected
 		#region Protected
+
+		protected  AsyncCallback Receiver { get; set; }
 
 		//CancellationToken used with Async Sockets
 		protected CancellationTokenSource TokenSource { get; set; }
@@ -313,11 +316,7 @@ namespace SimpleSockets
 		/// Start receiving bytes from server
 		/// </summary>
 		/// <param name="state"></param>
-		/// <param name="offset"></param>
-		protected internal abstract void Receive(IClientMetadata state, int offset = 0);
-
-		//Handles messages the server receives
-		protected abstract void ReceiveCallback(IAsyncResult result);
+		protected abstract void NetworkDataReceiver(IClientMetadata state);
 
 		#endregion
 
