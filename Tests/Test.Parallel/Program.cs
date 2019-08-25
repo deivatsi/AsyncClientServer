@@ -13,7 +13,7 @@ namespace Test.Parallel
 		private static SimpleSocketListener _server;
 		private static int _clientId;
 		private static readonly Random _random = new Random((int) DateTime.Now.Ticks);
-		private static readonly int _numMsg = 10000;
+		private static readonly int _numMsg = 1000;
 		private static readonly int _clientThreads = 10;
 		private static readonly int _totalToReceive = _numMsg * _clientThreads;
 		private static readonly Counter _received = new Counter();
@@ -51,8 +51,8 @@ namespace Test.Parallel
 
 		private static void StartServer()
 		{
-			//_server = new SimpleSocketTcpListener();
-			_server = new SimpleSocketTcpSslListener(@"C:\Users\CloetOMEN\Desktop\Test\cert.pfx","Password");
+			_server = new SimpleSocketTcpListener();
+			//_server = new SimpleSocketTcpSslListener(@"C:\Users\CloetOMEN\Desktop\Test\cert.pfx","Password");
 			_server.ServerHasStarted += ServerOnServerHasStarted;
 			_server.MessageReceived += ServerOnMessageReceived;
 			_server.ServerErrorThrown += ServerOnServerErrorThrown;
@@ -73,8 +73,8 @@ namespace Test.Parallel
 		{
 			//using (var client = new SimpleSocketTcpClient())
 			//{
-				//var client = new SimpleSocketTcpClient();
-				var client = new SimpleSocketTcpSslClient(@"C:\Users\CloetOMEN\Desktop\Test\cert.pfx", "Password");
+				var client = new SimpleSocketTcpClient();
+				//var client = new SimpleSocketTcpSslClient(@"C:\Users\CloetOMEN\Desktop\Test\cert.pfx", "Password");
 				_clientId++;
 				client.MessageReceived += ClientOnMessageReceived;
 				client.ConnectedToServer += ClientOnConnectedToServer;

@@ -132,11 +132,15 @@ namespace SimpleSockets.Server
 		{
 			try
 			{
+
 				while (!Token.IsCancellationRequested)
 				{
+					state.MreRead.WaitOne();
+					state.MreRead.Reset();
+
 					var offset = 0;
 
-					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
+					if (state.UnhandledBytes != null)
 						offset = state.UnhandledBytes.Length;
 
 					if (state.Buffer.Length < state.BufferSize)
@@ -151,39 +155,43 @@ namespace SimpleSockets.Server
 						{
 							var client = (ClientMetadata)ar.AsyncState;
 							var receive = state.Listener.EndReceive(ar);
-							//Check if client is still connected.
-							//If client is disconnected, send disconnected message
-							//and remove from clients list
-							if (!IsConnected(state.Id))
+
+							if (receive > 0)
 							{
-								RaiseClientDisconnected(state);
-								lock (ConnectedClients)
+								//Check if client is still connected.
+								//If client is disconnected, send disconnected message
+								//and remove from clients list
+								if (!IsConnected(state.Id))
 								{
-									ConnectedClients.Remove(state.Id);
+									RaiseClientDisconnected(state);
+									lock (ConnectedClients)
+									{
+										ConnectedClients.Remove(state.Id);
+									}
+								}
+								//Else start receiving and handle the message.
+								else
+								{
+									receive += offset;
+
+									//Does header check
+									if (client.Flag == 0)
+									{
+										if (client.SimpleMessage == null)
+											client.SimpleMessage = new SimpleMessage(client, this, Debug);
+										await ParallelQueue.Enqueue(() =>
+											client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+									}
+									else if (receive > 0)
+									{
+										await ParallelQueue.Enqueue(() =>
+											client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+									}
 								}
 							}
-							//Else start receiving and handle the message.
-							else
-							{
-								if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
-								{
-									receive += client.UnhandledBytes.Length;
-									client.UnhandledBytes = null;
-								}
 
-								//Does header check
-								if (client.Flag == 0)
-								{
-									if (client.SimpleMessage == null)
-										client.SimpleMessage = new SimpleMessage(client, this, Debug);
-									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
-								}
-								else if (receive > 0)
-								{
-									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
-								}
-							}
-
+							client.MreRead.Set();
+							state = client;
 						}, state);
 				}
 			}

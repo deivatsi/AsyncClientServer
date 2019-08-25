@@ -16,7 +16,7 @@ using SimpleSockets.Messaging.Metadata;
 namespace SimpleSockets.Server
 {
 
-	public class SimpleSocketTcpSslListener: SimpleSocketListener
+	public class SimpleSocketTcpSslListener : SimpleSocketListener
 	{
 
 		#region Vars
@@ -123,7 +123,7 @@ namespace SimpleSockets.Server
 				{
 					id = !ConnectedClients.Any() ? 1 : ConnectedClients.Keys.Max() + 1;
 
-					state = new ClientMetadata(((Socket) result.AsyncState).EndAccept(result), id);
+					state = new ClientMetadata(((Socket)result.AsyncState).EndAccept(result), id);
 
 
 					ConnectedClients.Add(id, state);
@@ -136,7 +136,7 @@ namespace SimpleSockets.Server
 				var stream = new NetworkStream(state.Listener);
 
 				//Create SslStream
-				state.SslStream = new SslStream(stream, false,AcceptCertificate);
+				state.SslStream = new SslStream(stream, false, AcceptCertificate);
 
 				Task.Run(() =>
 				{
@@ -215,7 +215,7 @@ namespace SimpleSockets.Server
 				{
 					throw new AuthenticationException("Failed to mutually authenticate.");
 				}
-				
+
 				RaiseAuthSuccess(state);
 				return true;
 			}
@@ -249,7 +249,7 @@ namespace SimpleSockets.Server
 
 		protected override void SendCallback(IAsyncResult result)
 		{
-			var message = (MessageWrapper) result.AsyncState;
+			var message = (MessageWrapper)result.AsyncState;
 			var state = message.State;
 
 			try
@@ -313,59 +313,69 @@ namespace SimpleSockets.Server
 		{
 			try
 			{
+				var offset = 0;
 				while (!Token.IsCancellationRequested)
 				{
-					var offset = 0;
+					state.MreRead.WaitOne();
+					state.MreRead.Reset();
 
-					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
-						offset = state.UnhandledBytes.Length;
+					if (offset > 0)
+					{
+						state.UnhandledBytes = state.Buffer;
+					}
 
-					if (state.Buffer.Length < state.BufferSize)
+					if (state.Buffer.Length < state.BufferSize || offset > 0)
 					{
 						state.ChangeBuffer(new byte[state.BufferSize]);
 						if (offset > 0)
 							Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
 					}
 
-					state.MreRead.WaitOne();
-					state.MreRead.Reset();
 					state.SslStream.BeginRead(state.Buffer, offset, state.Buffer.Length - offset,
 						Receiver = async (ar) =>
 						{
 							var client = (ClientMetadata)ar.AsyncState;
 							var receive = client.SslStream.EndRead(ar);
 
-							if (!IsConnected(client.Id))
+							if (receive > 0)
 							{
-								RaiseClientDisconnected(client);
-								lock (ConnectedClients)
+
+								if (!IsConnected(client.Id))
 								{
-									ConnectedClients.Remove(client.Id);
+									RaiseClientDisconnected(client);
+									lock (ConnectedClients)
+									{
+										ConnectedClients.Remove(client.Id);
+									}
 								}
+								//Else start receiving and handle the message.
+								else
+								{
+
+									if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+									{
+										receive += client.UnhandledBytes.Length;
+										client.UnhandledBytes = null;
+									}
+
+									if (client.Flag == 0 && receive > 0)
+									{
+										if (client.SimpleMessage == null)
+											client.SimpleMessage = new SimpleMessage(client, this, Debug);
+										await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+									}
+									else if (receive > 0)
+										await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
+								}
+								offset = client.Buffer.Length;
 							}
-							//Else start receiving and handle the message.
 							else
-							{
-
-								if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
-								{
-									receive += client.UnhandledBytes.Length;
-									client.UnhandledBytes = null;
-								}
-
-								if (client.Flag == 0 && receive > 0)
-								{
-									if (client.SimpleMessage == null)
-										client.SimpleMessage = new SimpleMessage(client, this, Debug);
-									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
-								}
-								else if (receive > 0)
-									await ParallelQueue.Enqueue(() => client.SimpleMessage.ReadBytesAndBuildMessage(receive));
-							}
+								offset = 0;
 
 							client.MreRead.Set();
+							state = client;
 						}, state);
-					
+
 				}
 			}
 			catch (Exception ex)

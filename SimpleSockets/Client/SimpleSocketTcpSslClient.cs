@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Net;
 using System.Net.Security;
@@ -15,7 +16,7 @@ using SimpleSockets.Messaging.Metadata;
 namespace SimpleSockets.Client
 {
 
-	public class SimpleSocketTcpSslClient: SimpleSocketClient
+	public class SimpleSocketTcpSslClient : SimpleSocketClient
 	{
 
 		#region Vars
@@ -34,7 +35,7 @@ namespace SimpleSockets.Client
 
 		#region Constructor
 
-		public SimpleSocketTcpSslClient(string cert, string certPass, TlsProtocol tls = TlsProtocol.Tls12,bool acceptInvalidCertificates = true, bool mutualAuth = false) : base()
+		public SimpleSocketTcpSslClient(string cert, string certPass, TlsProtocol tls = TlsProtocol.Tls12, bool acceptInvalidCertificates = true, bool mutualAuth = false) : base()
 		{
 			if (string.IsNullOrEmpty(cert))
 				throw new ArgumentNullException(nameof(cert));
@@ -234,7 +235,7 @@ namespace SimpleSockets.Client
 				RaiseMessageFailed(null, bytes, ex);
 			}
 		}
-		
+
 		protected override void BeginSendFromQueue(MessageWrapper message)
 		{
 			try
@@ -252,7 +253,7 @@ namespace SimpleSockets.Client
 
 		protected override void SendCallback(IAsyncResult result)
 		{
-			var message = (MessageWrapper) result.AsyncState;
+			var message = (MessageWrapper)result.AsyncState;
 			try
 			{
 				_sslStream.EndWrite(result);
@@ -273,7 +274,7 @@ namespace SimpleSockets.Client
 					Close();
 
 				_mreWriting.Set();
-				SentMre.Set();
+				//SentMre.Set();
 			}
 		}
 
@@ -285,13 +286,16 @@ namespace SimpleSockets.Client
 		{
 			try
 			{
+				var offset = 0;
 				while (!Token.IsCancellationRequested)
 				{
+					MessageRead.WaitOne();
+					MessageRead.Reset();
 
-					var offset = 0;
-
-					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
-						offset = state.UnhandledBytes.Length;
+					if (offset > 0)
+					{
+						state.UnhandledBytes = state.Buffer;
+					}
 
 					if (state.Buffer.Length < state.BufferSize)
 					{
@@ -300,29 +304,34 @@ namespace SimpleSockets.Client
 							Array.Copy(state.UnhandledBytes, 0, state.Buffer, 0, state.UnhandledBytes.Length);
 					}
 
-					state.MreRead.WaitOne();
-					state.MreRead.Reset();
 					_sslStream.BeginRead(state.Buffer, offset, state.Buffer.Length, Receiver = async (ar) =>
 					{
 						var client = (ClientMetadata)ar.AsyncState;
 						var receive = _sslStream.EndRead(ar);
 
-						if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+						if (receive > 0)
 						{
-							receive += client.UnhandledBytes.Length;
-							client.UnhandledBytes = null;
-						}
+							if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+							{
+								receive += client.UnhandledBytes.Length;
+								client.UnhandledBytes = null;
+							}
 
-						if (state.Flag == 0)
-						{
-							if (client.SimpleMessage == null)
-								client.SimpleMessage = new SimpleMessage(client, this, Debug);
-							await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+							if (state.Flag == 0)
+							{
+								if (client.SimpleMessage == null)
+									client.SimpleMessage = new SimpleMessage(client, this, Debug);
+								await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+							}
+							else if (receive > 0)
+								await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+							offset = client.Buffer.Length;
 						}
-						else if (receive > 0)
-							await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+						else
+							offset = 0;
 
-						client.MreRead.Set();
+						MessageRead.Set();
+						state = client;
 					}, state);
 
 				}

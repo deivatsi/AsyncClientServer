@@ -11,9 +11,9 @@ using SimpleSockets.Messaging.Metadata;
 
 namespace SimpleSockets.Client
 {
-	public class SimpleSocketTcpClient: SimpleSocketClient
+	public class SimpleSocketTcpClient : SimpleSocketClient
 	{
-
+		
 		/// <summary>
 		/// Creates a TcpClient socket.
 		/// </summary>
@@ -90,7 +90,7 @@ namespace SimpleSockets.Client
 
 
 		}
-		
+
 		protected override void OnConnectCallback(IAsyncResult result)
 		{
 			if (Disposed)
@@ -181,12 +181,16 @@ namespace SimpleSockets.Client
 		{
 			try
 			{
+				var offset = 0;
 				while (!Token.IsCancellationRequested)
 				{
-					var offset = 0;
+					MessageRead.WaitOne();
+					MessageRead.Reset();
 
-					if (state.UnhandledBytes != null && state.UnhandledBytes.Length > 0)
-						offset = state.UnhandledBytes.Length;
+					if (offset > 0)
+					{
+						state.UnhandledBytes = state.Buffer;
+					}
 
 					if (state.Buffer.Length < state.BufferSize)
 					{
@@ -198,33 +202,45 @@ namespace SimpleSockets.Client
 					state.Listener.BeginReceive(state.Buffer, offset, state.Buffer.Length - offset, SocketFlags.None,
 						Receiver = async (ar) =>
 						{
+							var client = (ClientMetadata)ar.AsyncState;
+							var receive = client.Listener.EndReceive(ar);
+
+
 							if (!IsConnected())
 							{
 								RaiseLog(new Exception("Socket is not connected, can't receive messages."));
 								return;
 							}
-
-							var client = (ClientMetadata)ar.AsyncState;
-							var receive = client.Listener.EndReceive(ar);
-
-							if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+							
+							if (receive > 0)
 							{
-								receive += client.UnhandledBytes.Length;
-								client.UnhandledBytes = null;
-							}
+								if (client.UnhandledBytes != null && client.UnhandledBytes.Length > 0)
+								{
+									receive += client.UnhandledBytes.Length;
+									client.UnhandledBytes = null;
+								}
 
-							//Does header check
-							if (state.Flag == 0)
-							{
-								if (client.SimpleMessage == null)
-									client.SimpleMessage = new SimpleMessage(client, this, true);
-								await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+								//Does header check
+								if (state.Flag == 0)
+								{
+									if (client.SimpleMessage == null)
+										client.SimpleMessage = new SimpleMessage(client, this, true);
+									await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+								}
+								else if (receive > 0)
+								{
+									await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
+								}
+
+								offset = client.Buffer.Length;
 							}
-							else if (receive > 0)
-							{
-								await client.SimpleMessage.ReadBytesAndBuildMessage(receive);
-							}
+							else
+								offset = 0;
+
+							MessageRead.Set();
+							state = client;
 						}, state);
+
 				}
 			}
 			catch (Exception ex)
@@ -236,8 +252,8 @@ namespace SimpleSockets.Client
 				NetworkDataReceiver(state);
 			}
 		}
-		
+
 		#endregion
-		
+
 	}
 }

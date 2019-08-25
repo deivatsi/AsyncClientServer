@@ -62,6 +62,7 @@ namespace SimpleSockets.Client
 		protected Socket Listener;
 		protected bool CloseClient;
 		protected readonly ManualResetEvent ConnectedMre = new ManualResetEvent(false);
+		protected readonly ManualResetEvent MessageRead = new ManualResetEvent(true);
 		protected readonly ManualResetEvent SentMre = new ManualResetEvent(false);
 		protected IPEndPoint Endpoint;
 		protected static System.Timers.Timer KeepAliveTimer;
